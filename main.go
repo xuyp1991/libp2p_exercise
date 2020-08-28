@@ -1,293 +1,61 @@
 package main
 
 import (
-    "bufio"
-    "context"
-    "crypto/rand"
-    "crypto/sha256"
-    "encoding/hex"
-    "encoding/json"
-    "flag"
-    "fmt"
-    "io"
-    "log"
-    mrand "math/rand"
-     "os"
-    // "strconv"
-     "strings"
-    "sync"
-    "time"
+	"bufio"
+	// "context"
+	// "crypto/rand"
+	// "crypto/sha256"
+	// "encoding/hex"
+	// "encoding/json"
+	"flag"
+	"fmt"
+	//   "io"
+	"log"
+	//    mrand "math/rand"
+	"os"
+	// "strconv"
+	golog "github.com/ipfs/go-log"
+	"strings"
 
-    "github.com/davecgh/go-spew/spew"
-    golog "github.com/ipfs/go-log"
-    libp2p "github.com/libp2p/go-libp2p"
-    crypto "github.com/libp2p/go-libp2p-crypto"
-    host "github.com/libp2p/go-libp2p-host"
-    net "github.com/libp2p/go-libp2p-net"
-    peer "github.com/libp2p/go-libp2p-peer"
-    pstore "github.com/libp2p/go-libp2p-peerstore"
-	ma "github.com/multiformats/go-multiaddr"
 	gologv2 "github.com/ipfs/go-log/v2"
+	"github.com/xuyp1991/libp2p_exercise/message"
+	"github.com/xuyp1991/libp2p_exercise/p2pnet"
 )
-
-
-
-var (
-    mutex = &sync.Mutex{}
-    Owner string
-
-    Datachan = make(chan []byte)
-)
-
-
-var  msgStore map[string]MessageInfo 
-// //构造一个结构体,存储消息,校验消息有没有接收过
-type MessageInfo struct {
-	Timestamp string
-    Hash      string
-    From      string
-	To string
-	Data []byte
-}
-
-func calculateHash(msg MessageInfo) string {
-    record := msg.Timestamp + msg.From + msg.To + string(msg.Data)
-    h := sha256.New()
-    h.Write([]byte(record))
-    hashed := h.Sum(nil)
-    return hex.EncodeToString(hashed)
-}
-
-func NewMsgInfo(from,to string,data []byte) MessageInfo {
-    var result MessageInfo
-    t := time.Now()
-
-    result.From = from
-    result.To = to
-    result.Data = data
-    result.Timestamp = t.String()
-    result.Hash = calculateHash(result)
-    return result
-}
-
-// makeBasicHost creates a LibP2P host with a random peer ID listening on the
-// given multiaddress. It will use secio if secio is true.
-func makeBasicHost(listenPort int, secio bool, randseed int64) (host.Host, error) {
-
-    var r io.Reader
-    if randseed == 0 {
-        r = rand.Reader
-    } else {
-        r = mrand.New(mrand.NewSource(randseed))
-    }
-
-    // Generate a key pair for this host. We will use it
-    // to obtain a valid host ID.
-    priv, _, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, r)
-    if err != nil {
-        return nil, err
-    }
-
-    opts := []libp2p.Option{
-        libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/127.0.0.1/tcp/%d", listenPort)),
-        libp2p.Identity(priv),
-    }
-
-    if !secio {
-        opts = append(opts, libp2p.NoSecurity) // 原文是libp2p.NoEncryption()，最新库已废弃
-    }
-
-    basicHost, err := libp2p.New(context.Background(), opts...)
-    if err != nil {
-        return nil, err
-    }
-
-    // Build host multiaddress
-    hostAddr, _ := ma.NewMultiaddr(fmt.Sprintf("/ipfs/%s", basicHost.ID().Pretty()))
-
-    // Now we can build a full multiaddress to reach this host
-    // by encapsulating both addresses:
-    addr := basicHost.Addrs()[0]
-    fullAddr := addr.Encapsulate(hostAddr)
-    log.Printf("I am %s\n", fullAddr)
-    if secio {
-        log.Printf("Now run \"go run main.go -l %d -d %s -secio\" on a different terminal\n", listenPort+1, fullAddr)
-    } else {
-        log.Printf("Now run \"go run main.go -l %d -d %s\" on a different terminal\n", listenPort+1, fullAddr)
-    }
-
-    return basicHost, nil
-}
-
-
-func handleStream(s net.Stream) {
-
-    log.Println("Got a new stream!")
-
-    // Create a buffer stream for non blocking read and write.
-    rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-
-    go readData(rw)
-    go writeData(rw)
-
-    // stream 's' will stay open until you close it (or the other side closes it).
-}
-
-
-func readData(rw *bufio.ReadWriter) {
-
-    for {
-        str, err := rw.ReadString('\n')
-        if err != nil {
-            log.Fatal(err)
-        }
-
-        if str == "" {
-            return
-        }
-        if str != "\n" {
-            
-            var msgInfo MessageInfo
-            if err := json.Unmarshal([]byte(str), &msgInfo); err != nil {
-                log.Fatal(err)
-            }
-
-           if _, ok := msgStore["1"]; ok {
-                continue
-            }
-
-            mutex.Lock()
-            msgStore[msgInfo.Hash] =  msgInfo
-            fmt.Printf("\x1b[32m%s\x1b[0m> ",str)
-            mutex.Unlock()
-
-        }
-    }
-}
-
-//发送什么样子的消息?
-func writeData(rw *bufio.ReadWriter) {
-    go getStdInData()
-
-    for {
-		select {
-            case sendData := <-Datachan:
-                newMsg := NewMsgInfo(Owner,"all",[]byte(sendData))
-                mutex.Lock()
-                msgStore[newMsg.Hash] =  newMsg
-                mutex.Unlock()
-
-                bytes, err := json.Marshal(newMsg)
-                if err != nil {
-                    log.Println(err)
-                }
-
-                spew.Dump(sendData)
-
-                mutex.Lock()
-                rw.WriteString(fmt.Sprintf("%s\n", string(bytes)))
-                rw.Flush()
-                mutex.Unlock()
-        }
-    }
-
-}
 
 func getStdInData() {
-    stdReader := bufio.NewReader(os.Stdin)
+	stdReader := bufio.NewReader(os.Stdin)
 
-    for {
-        fmt.Print("> ")
-        sendData, err := stdReader.ReadString('\n')
-        if err != nil {
-            log.Fatal(err)
-        }
+	for {
+		fmt.Print("> ")
+		sendData, err := stdReader.ReadString('\n')
+		if err != nil {
+			log.Fatal(err)
+		}
 
-        sendData = strings.Replace(sendData, "\n", "", -1)
-        if err != nil {
-            log.Fatal(err)
-        }
-        Datachan<- []byte(sendData)
-    }
+		sendData = strings.Replace(sendData, "\n", "", -1)
+		if err != nil {
+			log.Fatal(err)
+		}
+		newMsg := message.NewMsgInfo("all", []byte(sendData))
+		newMsg.SendData()
+	}
 }
 
 func main() {
 
 	golog.SetAllLoggers(gologv2.LevelInfo)
 
-    listenF := flag.Int("l", 0, "wait for incoming connections")
+	listenF := flag.Int("l", 0, "wait for incoming connections")
 	target := flag.String("d", "", "target peer to dial")
 	owner := flag.String("o", "", "owner of the node")
-    secio := flag.Bool("secio", false, "enable secio")
-    seed := flag.Int64("seed", 0, "set random seed for id generation")
-    flag.Parse()
+	secio := flag.Bool("secio", false, "enable secio")
+	seed := flag.Int64("seed", 0, "set random seed for id generation")
+	flag.Parse()
 
-    Owner = *owner
+	outchan := p2pnet.StartNet(*listenF, *secio, *seed, *target)
+	message.InitMsgStore(*owner, outchan)
 
-    if *listenF == 0 {
-        log.Fatal("Please provide a port to bind on with -l")
-    }
+	go getStdInData()
 
-    ha, err := makeBasicHost(*listenF, *secio, *seed)
-    if err != nil {
-        log.Fatal(err)
-    }
-
-    msgStore = make(map[string]MessageInfo)
-
-    if *target == "" {
-        log.Println("listening for connections")
-        // Set a stream handler on host A. /p2p/1.0.0 is
-        // a user-defined protocol name.
-        ha.SetStreamHandler("/p2p/1.0.0", handleStream)
-
-        select {} // hang forever
-        /**** This is where the listener code ends ****/
-    } else {
-        ha.SetStreamHandler("/p2p/1.0.0", handleStream)
-
-        // The following code extracts target's peer ID from the
-        // given multiaddress
-        ipfsaddr, err := ma.NewMultiaddr(*target)
-        if err != nil {
-            log.Fatalln(err)
-        }
-
-        pid, err := ipfsaddr.ValueForProtocol(ma.P_IPFS)
-        if err != nil {
-            log.Fatalln(err)
-        }
-
-        peerid, err := peer.IDB58Decode(pid)
-        if err != nil {
-            log.Fatalln(err)
-        }
-
-        // Decapsulate the /ipfs/<peerID> part from the target
-        // /ip4/<a.b.c.d>/ipfs/<peer> becomes /ip4/<a.b.c.d>
-        targetPeerAddr, _ := ma.NewMultiaddr(
-            fmt.Sprintf("/ipfs/%s", peer.IDB58Encode(peerid)))
-        targetAddr := ipfsaddr.Decapsulate(targetPeerAddr)
-
-        // We have a peer ID and a targetAddr so we add it to the peerstore
-        // so LibP2P knows how to contact it
-        ha.Peerstore().AddAddr(peerid, targetAddr, pstore.PermanentAddrTTL)
-
-        log.Println("opening stream")
-        // make a new stream from host B to host A
-        // it should be handled on host A by the handler we set above because
-        // we use the same /p2p/1.0.0 protocol
-        s, err := ha.NewStream(context.Background(), peerid, "/p2p/1.0.0")
-        if err != nil {
-            log.Fatalln(err)
-        }
-        // Create a buffered stream so that read and writes are non blocking.
-        rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-
-        // Create a thread to read and write data.
-        go writeData(rw)
-        go readData(rw)
-
-		select {} // hang forever
-	}
+	select {} // hang forever
 }
