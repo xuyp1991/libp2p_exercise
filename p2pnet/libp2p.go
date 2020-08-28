@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	mutex    = &sync.Mutex{}
-	Datachan = make(chan string)
-	Outchan  = make(chan string)
+	mutex         = &sync.Mutex{}
+	ArrayDatachan []chan string
+
+	Outchan = make(chan string)
 )
 
 func StartNet(listenPort int, secio bool, randseed int64, target string) (outChan <-chan string) {
@@ -76,9 +77,10 @@ func StartNet(listenPort int, secio bool, randseed int64, target string) (outCha
 		}
 		// Create a buffered stream so that read and writes are non blocking.
 		rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
-
+		Datachan := make(chan string)
+		ArrayDatachan = append(ArrayDatachan, Datachan)
 		// Create a thread to read and write data.
-		go writeData(rw)
+		go writeData(rw, Datachan)
 		go readData(rw)
 	}
 	return Outchan
@@ -136,12 +138,13 @@ func makeBasicHost(listenPort int, secio bool, randseed int64) (host.Host, error
 func handleStream(s net.Stream) {
 
 	log.Println("Got a new stream!")
-
+	Datachan := make(chan string)
+	ArrayDatachan = append(ArrayDatachan, Datachan)
 	// Create a buffer stream for non blocking read and write.
 	rw := bufio.NewReadWriter(bufio.NewReader(s), bufio.NewWriter(s))
 
 	go readData(rw)
-	go writeData(rw)
+	go writeData(rw, Datachan)
 }
 
 func readData(rw *bufio.ReadWriter) {
@@ -163,7 +166,8 @@ func readData(rw *bufio.ReadWriter) {
 	}
 }
 
-func writeData(rw *bufio.ReadWriter) {
+//多个协程,只能取一次,第二个就取不到了
+func writeData(rw *bufio.ReadWriter, Datachan <-chan string) {
 	for {
 		select {
 		case sendData := <-Datachan:
@@ -176,5 +180,7 @@ func writeData(rw *bufio.ReadWriter) {
 }
 
 func SendData(data string) {
-	Datachan <- data
+	for _, t := range ArrayDatachan {
+		t <- data
+	}
 }

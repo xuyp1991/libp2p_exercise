@@ -65,19 +65,22 @@ func UnmarshalMsgInfo(data string) (MessageInfo, bool) {
 	}
 
 	if _, ok := msgStore[msgInfo.Hash]; ok {
-		return msgInfo, false
+		return msgInfo, true
 	}
 
 	msgStore[msgInfo.Hash] = msgInfo
 	fmt.Printf("\x1b[32m%s\x1b[0m> ", data)
-	return msgInfo, true
+	return msgInfo, false
 }
 
 func ListenData(outChan <-chan string) {
 	for {
 		select {
 		case outdata := <-outChan:
-			UnmarshalMsgInfo(outdata)
+			_, found := UnmarshalMsgInfo(outdata)
+			if !found {
+				p2pnet.SendData(outdata)
+			}
 		}
 	}
 }

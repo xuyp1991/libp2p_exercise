@@ -187,7 +187,6 @@ func readData(rw *bufio.ReadWriter) {
 }
 
 func writeData(rw *bufio.ReadWriter) {
-
 	go func() {
 		for {
 			time.Sleep(5 * time.Second)
@@ -202,7 +201,6 @@ func writeData(rw *bufio.ReadWriter) {
 			rw.WriteString(fmt.Sprintf("%s\n", string(bytes)))
 			rw.Flush()
 			mutex.Unlock()
-
 		}
 	}()
 
